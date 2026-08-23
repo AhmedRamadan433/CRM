@@ -13,8 +13,13 @@ router
 router
   .route("/:id")
   .get(restrictTo("ADMIN", "MANAGER"), userController.getUserById)
-  .patch(restrictTo("ADMIN"), userController.updateUserById)
-  .delete(restrictTo("ADMIN"), userController.deactivateUserById);
+  .patch(restrictTo("ADMIN"), userController.updateUserById);
+
+router.patch(
+  "/:id/activate",
+  restrictTo("ADMIN"),
+  userController.activateUserById,
+);
 
 router.patch(
   "/:id/role",
