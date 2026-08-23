@@ -1,0 +1,13 @@
+const userroutes = require("./user.routes");
+const authroutes = require("./auth.routes");
+const customerroutes = require("./customer.routes");
+const leadroutes = require("./lead.routes");
+const activityroutes = require("./activity.routes");
+const express = require("express");
+const router = express.Router();
+router.use("/auth", authroutes);
+router.use("/users", userroutes);
+router.use("/customers", customerroutes);
+router.use("/leads", leadroutes);
+router.use("/activities", activityroutes);
+module.exports = router;

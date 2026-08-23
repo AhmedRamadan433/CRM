@@ -1,0 +1,17 @@
+const express = require("express");
+const app = express();
+const All_Routes = require("./routes/All_Routes");
+app.use(express.json());
+/// routes
+app.use("/", All_Routes);
+/////////error handling middleware
+app.use((err, req, res, next) => {
+  const statusCode = err.statusCode || 500;
+  const status = err.status || "error";
+  const message = err.message || "Internal Server Error";
+  res.status(statusCode).json({
+    status,
+    message,
+  });
+});
+module.exports = app;
