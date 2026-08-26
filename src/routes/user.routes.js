@@ -16,9 +16,9 @@ router
   .patch(restrictTo("ADMIN"), userController.updateUserById);
 
 router.patch(
-  "/:id/activate",
+  "/:id/deactivate",
   restrictTo("ADMIN"),
-  userController.activateUserById,
+  userController.deactivateUserById,
 );
 
 router.patch(
