@@ -1,172 +1,227 @@
-const { Note } = require("../models/Note.model");
+const Note = require("../models/Note.model");
 const Customer = require("../models/Customer.model");
 const { Lead } = require("../models/Lead.model");
-const Conversation = require("../models/Conversation.model");
+
 const AppError = require("../utils/AppError");
 const asyncwrapper = require("../utils/Async_Wrapper");
 const HttpStatusText = require("../utils/HttpStatusText");
 
-let createActivity = null;
-try {
-  ({ createActivity } = require("../services/activity.service"));
-} catch (_) {
-  createActivity = null;
-}
+const { createActivity } = require("../services/activity.service");
 
-/**
- * Access control:
- * ADMIN/MANAGER: full access to all notes
- * SALES_AGENT: only notes created by them or assigned to them
- */
-const hasNoteAccess = (note, user) => {
-  if (!note || !user) return false;
-  if (["ADMIN", "MANAGER"].includes(user.role)) return true;
+const fullAccessRoles = ["ADMIN", "MANAGER"];
+
+// Check if user is the creator of the note
+const isNoteCreator = (note, user) => {
   return note.createdBy.toString() === user._id.toString();
+};
+
+// Check if user can access the note
+const canAccessNote = async (note, user) => {
+  // ADMIN / MANAGER
+  if (fullAccessRoles.includes(user.role)) {
+    return true;
+  }
+
+  // Note creator
+  if (isNoteCreator(note, user)) {
+    return true;
+  }
+
+  // Customer assigned to user
+  if (note.customerId) {
+    const customer = await Customer.findById(note.customerId).select(
+      "assignedTo",
+    );
+
+    if (customer?.assignedTo?.toString() === user._id.toString()) {
+      return true;
+    }
+  }
+
+  // Lead assigned to user
+  if (note.leadId) {
+    const lead = await Lead.findById(note.leadId).select("assignedTo");
+
+    if (lead?.assignedTo?.toString() === user._id.toString()) {
+      return true;
+    }
+  }
+
+  return false;
 };
 
 // Create note
 const createNote = asyncwrapper(async (req, res, next) => {
-  const { customerId, leadId, conversationId, followUpId, title, content, type } =
-    req.body;
+  const { customerId, leadId, content } = req.body;
 
-  if (!customerId) {
+  // Must belong to Customer OR Lead
+  if (!customerId && !leadId) {
     return next(
-      new AppError("Customer ID is required", 400, HttpStatusText.FAIL),
+      new AppError(
+        "Customer ID or Lead ID is required",
+        400,
+        HttpStatusText.FAIL,
+      ),
     );
   }
 
-  if (!content) {
+  if (customerId && leadId) {
+    return next(
+      new AppError(
+        "Note cannot belong to both customer and lead",
+        400,
+        HttpStatusText.FAIL,
+      ),
+    );
+  }
+
+  if (!content || !content.trim()) {
     return next(
       new AppError("Note content is required", 400, HttpStatusText.FAIL),
     );
   }
 
-  // Validate customer exists
-  const customer = await Customer.findById(customerId);
-  if (!customer) {
-    return next(
-      new AppError("Customer not found", 404, HttpStatusText.FAIL),
-    );
+  // Check Customer
+  if (customerId) {
+    const customer = await Customer.findById(customerId).select("assignedTo");
+
+    if (!customer) {
+      return next(new AppError("Customer not found", 404, HttpStatusText.FAIL));
+    }
+
+    // SALES_AGENT can only add notes
+    // to assigned customers
+    if (
+      !fullAccessRoles.includes(req.user.role) &&
+      customer.assignedTo?.toString() !== req.user._id.toString()
+    ) {
+      return next(
+        new AppError(
+          "You do not have permission to add a note to this customer",
+          403,
+          HttpStatusText.FAIL,
+        ),
+      );
+    }
   }
 
-  // Validate lead if provided
+  // Check Lead
   if (leadId) {
-    const lead = await Lead.findById(leadId);
+    const lead = await Lead.findById(leadId).select("assignedTo");
+
     if (!lead) {
-      return next(
-        new AppError("Lead not found", 404, HttpStatusText.FAIL),
-      );
+      return next(new AppError("Lead not found", 404, HttpStatusText.FAIL));
     }
-  }
 
-  // Validate conversation if provided
-  if (conversationId) {
-    const conversation = await Conversation.findById(conversationId);
-    if (!conversation) {
+    // SALES_AGENT can only add notes
+    // to assigned leads
+    if (
+      !fullAccessRoles.includes(req.user.role) &&
+      lead.assignedTo?.toString() !== req.user._id.toString()
+    ) {
       return next(
-        new AppError("Conversation not found", 404, HttpStatusText.FAIL),
-      );
-    }
-  }
-
-  // Validate followUp if provided
-  if (followUpId) {
-    const { FollowUp } = require("../models/FollowUp.model");
-    const followUp = await FollowUp.findById(followUpId);
-    if (!followUp) {
-      return next(
-        new AppError("Follow-up not found", 404, HttpStatusText.FAIL),
+        new AppError(
+          "You do not have permission to add a note to this lead",
+          403,
+          HttpStatusText.FAIL,
+        ),
       );
     }
   }
 
   const note = await Note.create({
-    customerId,
+    customerId: customerId || null,
     leadId: leadId || null,
-    conversationId: conversationId || null,
-    followUpId: followUpId || null,
-    createdBy: req.user._id,
-    title: title ? title.trim() : null,
     content: content.trim(),
-    type: type ? type.toUpperCase() : "GENERAL",
+    createdBy: req.user._id,
   });
 
-  if (createActivity) {
-    try {
-      await createActivity({
-        actorId: req.user._id,
-        action: "NOTE_CREATED",
-        entityType: "NOTE",
-        entityId: note._id,
-        metadata: {
-          customerId,
-          leadId,
-          conversationId,
-          followUpId,
-          type: note.type,
-        },
-      });
-    } catch (_) {
-      // silent
-    }
-  }
+  // Activity log
+  await createActivity({
+    actorId: req.user._id,
+    action: "NOTE_CREATED",
+    entityType: "NOTE",
+    entityId: note._id,
+    metadata: {
+      customerId: note.customerId,
+      leadId: note.leadId,
+    },
+  });
 
-  const populated = await note.populate([
-    { path: "customerId", select: "name email phone" },
-    { path: "leadId", select: "title status" },
-    { path: "conversationId", select: "status" },
-    { path: "followUpId", select: "title status" },
-    { path: "createdBy", select: "name email role" },
-  ]);
+  await note.populate("createdBy", "name email role");
 
   res.status(201).json({
-    status: HttpStatusText.SUCCESS,
+    status: HttpStatusText.CREATED,
     message: "Note created successfully",
     data: {
-      note: populated,
+      note,
     },
   });
 });
 
-// Get all notes with filters
+// Get all notes
 const getAllNotes = asyncwrapper(async (req, res, next) => {
-  const { customerId, leadId, conversationId, followUpId, type } = req.query;
+  const { customerId, leadId } = req.query;
 
   const filter = {};
 
-  if (customerId) filter.customerId = customerId;
-  if (leadId) filter.leadId = leadId;
-  if (conversationId) filter.conversationId = conversationId;
-  if (followUpId) filter.followUpId = followUpId;
-  if (type) filter.type = type.toUpperCase();
+  if (customerId) {
+    filter.customerId = customerId;
+  }
 
-  const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
-  const limit = Math.min(
-    Math.max(parseInt(req.query.limit, 10) || 20, 1),
-    100,
-  );
-  const skip = (page - 1) * limit;
+  if (leadId) {
+    filter.leadId = leadId;
+  }
 
-  const [notes, total] = await Promise.all([
-    Note.find(filter)
-      .populate("customerId", "name email phone")
-      .populate("leadId", "title status")
-      .populate("conversationId", "status")
-      .populate("followUpId", "title status")
-      .populate("createdBy", "name email role")
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit)
-      .lean(),
-    Note.countDocuments(filter),
-  ]);
+  // SALES_AGENT access filter
+  if (!fullAccessRoles.includes(req.user.role)) {
+    const [customers, leads] = await Promise.all([
+      Customer.find({
+        assignedTo: req.user._id,
+      })
+        .select("_id")
+        .lean(),
+
+      Lead.find({
+        assignedTo: req.user._id,
+      })
+        .select("_id")
+        .lean(),
+    ]);
+
+    const accessFilter = {
+      $or: [
+        {
+          createdBy: req.user._id,
+        },
+        {
+          customerId: {
+            $in: customers.map((customer) => customer._id),
+          },
+        },
+        {
+          leadId: {
+            $in: leads.map((lead) => lead._id),
+          },
+        },
+      ],
+    };
+
+    filter.$and = [accessFilter];
+  }
+
+  const notes = await Note.find(filter)
+    .populate("customerId", "name email phone")
+    .populate("leadId", "title status")
+    .populate("createdBy", "name email role")
+    .sort({
+      createdAt: -1,
+    })
+    .lean();
 
   res.status(200).json({
     status: HttpStatusText.SUCCESS,
     results: notes.length,
-    total,
-    page,
-    totalPages: Math.ceil(total / limit),
     data: {
       notes,
     },
@@ -178,17 +233,13 @@ const getNoteById = asyncwrapper(async (req, res, next) => {
   const note = await Note.findById(req.params.id)
     .populate("customerId", "name email phone")
     .populate("leadId", "title status")
-    .populate("conversationId", "status")
-    .populate("followUpId", "title status")
     .populate("createdBy", "name email role");
 
   if (!note) {
-    return next(
-      new AppError("Note not found", 404, HttpStatusText.FAIL),
-    );
+    return next(new AppError("Note not found", 404, HttpStatusText.FAIL));
   }
 
-  if (!hasNoteAccess(note, req.user)) {
+  if (!(await canAccessNote(note, req.user))) {
     return next(
       new AppError(
         "You do not have permission to view this note",
@@ -208,16 +259,21 @@ const getNoteById = asyncwrapper(async (req, res, next) => {
 
 // Update note
 const updateNoteById = asyncwrapper(async (req, res, next) => {
-  const { title, content, type } = req.body;
+  const { content } = req.body;
 
-  const note = await Note.findById(req.params.id);
-  if (!note) {
+  if (!content || !content.trim()) {
     return next(
-      new AppError("Note not found", 404, HttpStatusText.FAIL),
+      new AppError("Note content is required", 400, HttpStatusText.FAIL),
     );
   }
 
-  if (!hasNoteAccess(note, req.user)) {
+  const note = await Note.findById(req.params.id);
+
+  if (!note) {
+    return next(new AppError("Note not found", 404, HttpStatusText.FAIL));
+  }
+
+  if (!(await canAccessNote(note, req.user))) {
     return next(
       new AppError(
         "You do not have permission to update this note",
@@ -227,30 +283,30 @@ const updateNoteById = asyncwrapper(async (req, res, next) => {
     );
   }
 
-  const updates = {};
-  if (title !== undefined) updates.title = title ? title.trim() : null;
-  if (content) updates.content = content.trim();
-  if (type) updates.type = type.toUpperCase();
+  const oldContent = note.content;
 
-  const updated = await Note.findByIdAndUpdate(
-    req.params.id,
-    updates,
-    { runValidators: true, returnDocument: "after" },
-  );
+  note.content = content.trim();
 
-  const populated = await updated.populate([
-    { path: "customerId", select: "name email phone" },
-    { path: "leadId", select: "title status" },
-    { path: "conversationId", select: "status" },
-    { path: "followUpId", select: "title status" },
-    { path: "createdBy", select: "name email role" },
-  ]);
+  await note.save();
+
+  await createActivity({
+    actorId: req.user._id,
+    action: "NOTE_UPDATED",
+    entityType: "NOTE",
+    entityId: note._id,
+    metadata: {
+      oldContent,
+      newContent: note.content,
+    },
+  });
+
+  await note.populate("createdBy", "name email role");
 
   res.status(200).json({
     status: HttpStatusText.SUCCESS,
     message: "Note updated successfully",
     data: {
-      note: populated,
+      note,
     },
   });
 });
@@ -258,13 +314,12 @@ const updateNoteById = asyncwrapper(async (req, res, next) => {
 // Delete note
 const deleteNoteById = asyncwrapper(async (req, res, next) => {
   const note = await Note.findById(req.params.id);
+
   if (!note) {
-    return next(
-      new AppError("Note not found", 404, HttpStatusText.FAIL),
-    );
+    return next(new AppError("Note not found", 404, HttpStatusText.FAIL));
   }
 
-  if (!hasNoteAccess(note, req.user)) {
+  if (!(await canAccessNote(note, req.user))) {
     return next(
       new AppError(
         "You do not have permission to delete this note",
@@ -274,7 +329,18 @@ const deleteNoteById = asyncwrapper(async (req, res, next) => {
     );
   }
 
-  await Note.findByIdAndDelete(req.params.id);
+  await createActivity({
+    actorId: req.user._id,
+    action: "NOTE_DELETED",
+    entityType: "NOTE",
+    entityId: note._id,
+    metadata: {
+      customerId: note.customerId,
+      leadId: note.leadId,
+    },
+  });
+
+  await note.deleteOne();
 
   res.status(200).json({
     status: HttpStatusText.SUCCESS,
