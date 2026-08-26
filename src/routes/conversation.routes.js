@@ -1,6 +1,7 @@
 const express = require("express");
 
 const conversationController = require("../controllers/conversation.controller");
+const messageController = require("../controllers/message.controller");
 
 const protect = require("../middleware/auth.middleware");
 const restrictTo = require("../middleware/role.middleware");
@@ -50,6 +51,19 @@ router.patch(
   "/:id/status",
   restrictTo("ADMIN", "MANAGER", "SALES_AGENT"),
   conversationController.changeConversationStatus,
+);
+
+// Message routes (nested under conversation)
+router.post(
+  "/:id/messages",
+  restrictTo("ADMIN", "MANAGER", "SALES_AGENT"),
+  messageController.sendMessage,
+);
+
+router.get(
+  "/:id/messages",
+  restrictTo("ADMIN", "MANAGER", "SALES_AGENT"),
+  messageController.getConversationMessages,
 );
 
 module.exports = router;

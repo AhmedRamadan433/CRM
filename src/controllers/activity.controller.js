@@ -1,4 +1,4 @@
-const Activity = require("../models/activity.model");
+const { Activity } = require("../models/Activity.model");
 const AppError = require("../utils/AppError");
 const asyncwrapper = require("../utils/Async_Wrapper");
 const HttpStatusText = require("../utils/HttpStatusText");
