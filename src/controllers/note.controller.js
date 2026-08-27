@@ -7,6 +7,8 @@ const asyncwrapper = require("../utils/Async_Wrapper");
 const HttpStatusText = require("../utils/HttpStatusText");
 
 const { createActivity } = require("../services/activity.service");
+const User = require("../models/User.model");
+const { notify } = require("../services/notification.service");
 
 const fullAccessRoles = ["ADMIN", "MANAGER"];
 
@@ -135,6 +137,29 @@ const createNote = asyncwrapper(async (req, res, next) => {
     content: content.trim(),
     createdBy: req.user._id,
   });
+
+  const mentionedEmails = [...content.matchAll(/@([^\s@]+@[^\s@]+)/g)].map(
+    ([, email]) => email.toLowerCase(),
+  );
+  if (mentionedEmails.length) {
+    const mentionedUsers = await User.find({
+      email: { $in: mentionedEmails },
+      _id: { $ne: req.user._id },
+      status: "ACTIVE",
+    }).select("_id");
+    await Promise.all(
+      mentionedUsers.map((user) =>
+        notify(
+          user._id,
+          "NOTE_MENTION",
+          "You were mentioned in a note",
+          "You were mentioned in a note.",
+          "NOTE",
+          note._id,
+        ),
+      ),
+    );
+  }
 
   // Activity log
   await createActivity({

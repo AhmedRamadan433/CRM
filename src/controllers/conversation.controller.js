@@ -8,10 +8,16 @@ const asyncwrapper = require("../utils/Async_Wrapper");
 const HttpStatusText = require("../utils/HttpStatusText");
 
 const { createActivity } = require("../services/activity.service");
+const { notify } = require("../services/notification.service");
+
+const conversationAccessFilter = (req) =>
+  req.user.role === "SALES_AGENT" ? { assignedTo: req.user._id } : {};
 
 // Create a new conversation
 const createConversation = asyncwrapper(async (req, res, next) => {
   const { customerId, leadId, assignedTo } = req.body;
+  const effectiveAssignedTo =
+    req.user.role === "SALES_AGENT" ? req.user._id : assignedTo;
 
   // Check customer exists
   const customerExists = await Customer.exists({
@@ -34,8 +40,8 @@ const createConversation = asyncwrapper(async (req, res, next) => {
   }
 
   // Check assigned user if provided
-  if (assignedTo) {
-    const user = await User.findById(assignedTo);
+  if (effectiveAssignedTo) {
+    const user = await User.findById(effectiveAssignedTo);
 
     if (!user) {
       return next(
@@ -57,7 +63,7 @@ const createConversation = asyncwrapper(async (req, res, next) => {
   const conversation = await Conversation.create({
     customerId,
     leadId: leadId || null,
-    assignedTo: assignedTo || null,
+    assignedTo: effectiveAssignedTo || null,
   });
 
   // Activity log
@@ -91,7 +97,7 @@ const createConversation = asyncwrapper(async (req, res, next) => {
 
 // Get all conversations
 const getAllConversations = asyncwrapper(async (req, res, next) => {
-  const conversations = await Conversation.find()
+  const conversations = await Conversation.find(conversationAccessFilter(req))
     .populate("customerId")
     .populate("leadId")
     .populate("assignedTo");
@@ -107,7 +113,10 @@ const getAllConversations = asyncwrapper(async (req, res, next) => {
 
 // Get conversation by ID
 const getConversationById = asyncwrapper(async (req, res, next) => {
-  const conversation = await Conversation.findById(req.params.id)
+  const conversation = await Conversation.findOne({
+    _id: req.params.id,
+    ...conversationAccessFilter(req),
+  })
     .populate("customerId")
     .populate("leadId")
     .populate("assignedTo");
@@ -155,8 +164,8 @@ const updateConversation = asyncwrapper(async (req, res, next) => {
     }
   }
 
-  const conversation = await Conversation.findByIdAndUpdate(
-    id,
+  const conversation = await Conversation.findOneAndUpdate(
+    { _id: id, ...conversationAccessFilter(req) },
     {
       customerId,
       leadId,
@@ -224,6 +233,14 @@ const assignConversation = asyncwrapper(async (req, res, next) => {
   conversation.assignedTo = userId;
 
   await conversation.save();
+  await notify(
+    userId,
+    "CONVERSATION_ASSIGNED",
+    "Conversation assigned",
+    "A conversation was assigned to you.",
+    "CONVERSATION",
+    conversation._id,
+  );
 
   // Activity log
   try {

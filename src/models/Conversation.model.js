@@ -53,6 +53,9 @@ const conversationSchema = new mongoose.Schema(
   },
 );
 
+conversationSchema.index({ assignedTo: 1, status: 1, updatedAt: -1 });
+conversationSchema.index({ customerId: 1, updatedAt: -1 });
+
 const Conversation =
   mongoose.models.Conversation ||
   mongoose.model("Conversation", conversationSchema);

@@ -53,6 +53,10 @@ const customerSchema = new mongoose.Schema(
   },
 );
 
+customerSchema.index({ name: 1 });
+customerSchema.index({ email: 1 });
+customerSchema.index({ assignedTo: 1, name: 1 });
+
 const Customer = mongoose.model("Customer", customerSchema);
 
 module.exports = Customer;

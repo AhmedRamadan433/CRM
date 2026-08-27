@@ -75,6 +75,7 @@ const messageSchema = new mongoose.Schema(
 messageSchema.index({ conversationId: 1, createdAt: 1 });
 messageSchema.index({ senderId: 1, createdAt: -1 });
 messageSchema.index({ replyTo: 1 });
+messageSchema.index({ content: "text" });
 
 // Status transition helper (SENT -> DELIVERED -> READ)
 messageSchema.methods.markAs = function (newStatus) {

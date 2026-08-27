@@ -4,6 +4,9 @@ const AppError = require("../utils/AppError");
 const asyncwrapper = require("../utils/Async_Wrapper");
 const HttpStatusText = require("../utils/HttpStatusText");
 
+const customerAccessFilter = (req) =>
+  req.user.role === "SALES_AGENT" ? { assignedTo: req.user._id } : {};
+
 // Create customer
 const createCustomer = asyncwrapper(async (req, res, next) => {
   const { name, email, phone, avatar, tags, source, notes } = req.body;
@@ -16,6 +19,7 @@ const createCustomer = asyncwrapper(async (req, res, next) => {
     tags,
     source,
     notes,
+    assignedTo: req.user.role === "SALES_AGENT" ? req.user._id : undefined,
   });
 
   res.status(201).json({
@@ -27,7 +31,16 @@ const createCustomer = asyncwrapper(async (req, res, next) => {
 
 // Get all customers
 const getAllCustomers = asyncwrapper(async (req, res, next) => {
-  const customers = await Customer.find();
+  const filter = customerAccessFilter(req);
+  ["name", "phone", "email", "source"].forEach((field) => {
+    if (req.query[field]) filter[field] = { $regex: req.query[field], $options: "i" };
+  });
+  if (req.query.createdAfter || req.query.createdBefore) {
+    filter.createdAt = {};
+    if (req.query.createdAfter) filter.createdAt.$gte = new Date(req.query.createdAfter);
+    if (req.query.createdBefore) filter.createdAt.$lt = new Date(req.query.createdBefore);
+  }
+  const customers = await Customer.find(filter);
 
   res.status(200).json({
     status: HttpStatusText.SUCCESS,
@@ -38,7 +51,10 @@ const getAllCustomers = asyncwrapper(async (req, res, next) => {
 
 // Get customer by ID
 const getCustomerById = asyncwrapper(async (req, res, next) => {
-  const customer = await Customer.findById(req.params.id);
+  const customer = await Customer.findOne({
+    _id: req.params.id,
+    ...customerAccessFilter(req),
+  });
 
   if (!customer) {
     return next(new AppError("Customer not found.", 404, HttpStatusText.FAIL));
@@ -54,8 +70,8 @@ const getCustomerById = asyncwrapper(async (req, res, next) => {
 const updateCustomerById = asyncwrapper(async (req, res, next) => {
   const { name, email, phone, avatar, tags, source, notes } = req.body;
 
-  const customer = await Customer.findByIdAndUpdate(
-    req.params.id,
+  const customer = await Customer.findOneAndUpdate(
+    { _id: req.params.id, ...customerAccessFilter(req) },
     {
       name,
       email,
@@ -93,6 +109,7 @@ const searchCustomerByName = asyncwrapper(async (req, res, next) => {
     );
   }
   const customers = await Customer.find({
+    ...customerAccessFilter(req),
     name: { $regex: name, $options: "i" },
   });
 
@@ -114,6 +131,7 @@ const searchCustomerByPhone = asyncwrapper(async (req, res, next) => {
     );
   }
   const customers = await Customer.find({
+    ...customerAccessFilter(req),
     phone: { $regex: phone, $options: "i" },
   });
   res.status(200).json({
@@ -134,6 +152,7 @@ const searchCustomerByEmail = asyncwrapper(async (req, res, next) => {
     );
   }
   const customers = await Customer.find({
+    ...customerAccessFilter(req),
     email: { $regex: email, $options: "i" },
   });
   res.status(200).json({

@@ -87,6 +87,11 @@ const leadSchema = new mongoose.Schema(
   },
 );
 
+leadSchema.index({ title: 1 });
+leadSchema.index({ product: 1 });
+leadSchema.index({ assignedTo: 1, title: 1 });
+leadSchema.index({ customerId: 1, createdAt: -1 });
+
 // Validate and apply lead status transition
 leadSchema.methods.transitionTo = function (newStatus, { reason } = {}) {
   const currentStatus = this.status;

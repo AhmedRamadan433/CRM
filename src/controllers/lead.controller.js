@@ -7,6 +7,10 @@ const asyncwrapper = require("../utils/Async_Wrapper");
 const HttpStatusText = require("../utils/HttpStatusText");
 
 const { createActivity } = require("../services/activity.service");
+const { notify } = require("../services/notification.service");
+
+const leadAccessFilter = (req) =>
+  req.user.role === "SALES_AGENT" ? { assignedTo: req.user._id } : {};
 
 // Create new lead
 const createLead = asyncwrapper(async (req, res, next) => {
@@ -56,7 +60,7 @@ const createLead = asyncwrapper(async (req, res, next) => {
     product,
     budget,
     source,
-    assignedTo,
+    assignedTo: req.user.role === "SALES_AGENT" ? req.user._id : assignedTo,
     expectedCloseDate,
   });
 
@@ -87,12 +91,13 @@ const getAllLeads = asyncwrapper(async (req, res, next) => {
   const { status, assignedTo, customerId, source } = req.query;
 
   const filter = {};
+  Object.assign(filter, leadAccessFilter(req));
 
   if (status) {
     filter.status = status;
   }
 
-  if (assignedTo) {
+  if (assignedTo && req.user.role !== "SALES_AGENT") {
     filter.assignedTo = assignedTo;
   }
 
@@ -118,7 +123,7 @@ const getAllLeads = asyncwrapper(async (req, res, next) => {
 
 // Get lead by ID
 const getLeadById = asyncwrapper(async (req, res, next) => {
-  const lead = await Lead.findById(req.params.id)
+  const lead = await Lead.findOne({ _id: req.params.id, ...leadAccessFilter(req) })
     .populate("customerId")
     .populate("assignedTo")
     .lean();
@@ -137,8 +142,8 @@ const getLeadById = asyncwrapper(async (req, res, next) => {
 const updateLeadById = asyncwrapper(async (req, res, next) => {
   const { title, product, budget, source, expectedCloseDate } = req.body;
 
-  const lead = await Lead.findByIdAndUpdate(
-    req.params.id,
+  const lead = await Lead.findOneAndUpdate(
+    { _id: req.params.id, ...leadAccessFilter(req) },
     {
       title,
       product,
@@ -187,8 +192,8 @@ const assignLeadToUser = asyncwrapper(async (req, res, next) => {
     );
   }
 
-  const lead = await Lead.findByIdAndUpdate(
-    req.params.id,
+  const lead = await Lead.findOneAndUpdate(
+    { _id: req.params.id, ...leadAccessFilter(req) },
     {
       assignedTo: userId,
     },
@@ -211,6 +216,14 @@ const assignLeadToUser = asyncwrapper(async (req, res, next) => {
       assignedTo: userId,
     },
   });
+  await notify(
+    userId,
+    "LEAD_ASSIGNED",
+    "Lead assigned",
+    `Lead "${lead.title}" was assigned to you.`,
+    "LEAD",
+    lead._id,
+  );
 
   res.status(200).json({
     status: HttpStatusText.SUCCESS,
@@ -227,7 +240,7 @@ const changeLeadStatus = asyncwrapper(async (req, res, next) => {
     return next(new AppError("Status is required", 400, HttpStatusText.FAIL));
   }
 
-  const lead = await Lead.findById(req.params.id);
+  const lead = await Lead.findOne({ _id: req.params.id, ...leadAccessFilter(req) });
 
   if (!lead) {
     return next(new AppError("Lead not found", 404, HttpStatusText.FAIL));

@@ -99,6 +99,8 @@ dealSchema.index({ leadId: 1 });
 dealSchema.index({ assignedTo: 1, stage: 1 });
 dealSchema.index({ stage: 1, createdAt: -1 });
 dealSchema.index({ value: -1 });
+dealSchema.index({ title: 1 });
+dealSchema.index({ assignedTo: 1, title: 1 });
 
 // Validate and apply stage transition
 dealSchema.methods.transitionTo = function (newStage, { reason } = {}) {

@@ -8,6 +8,7 @@ const asyncwrapper = require("../utils/Async_Wrapper");
 const HttpStatusText = require("../utils/HttpStatusText");
 
 const { createActivity } = require("../services/activity.service");
+const { notify } = require("../services/notification.service");
 
 const fullAccessRoles = ["ADMIN", "MANAGER"];
 
@@ -120,7 +121,8 @@ const createDeal = asyncwrapper(async (req, res, next) => {
     title: title.trim(),
     value,
     currency: currency || "EGP",
-    assignedTo: assignedTo || null,
+    assignedTo:
+      req.user.role === "SALES_AGENT" ? req.user._id : assignedTo || null,
     expectedCloseDate: expectedCloseDate || null,
     notes: notes ? notes.trim() : null,
   });
@@ -193,7 +195,7 @@ const getAllDeals = asyncwrapper(async (req, res, next) => {
     filter.stage = stage.toUpperCase();
   }
 
-  if (assignedTo) {
+  if (assignedTo && req.user.role !== "SALES_AGENT") {
     filter.assignedTo = assignedTo;
   }
 
@@ -355,6 +357,16 @@ const updateDeal = asyncwrapper(async (req, res, next) => {
     runValidators: true,
     returnDocument: "after",
   });
+  if (updated.assignedTo) {
+    await notify(
+      updated.assignedTo,
+      "DEAL_UPDATED",
+      "Deal updated",
+      `Deal "${updated.title}" was updated.`,
+      "DEAL",
+      updated._id,
+    );
+  }
 
   const populated = await updated.populate([
     {
@@ -424,8 +436,15 @@ const assignDeal = asyncwrapper(async (req, res, next) => {
   const oldAssignedTo = deal.assignedTo;
 
   deal.assignedTo = userId;
-
   await deal.save();
+  await notify(
+    userId,
+    "DEAL_UPDATED",
+    "Deal assigned",
+    `Deal "${deal.title}" was assigned to you.`,
+    "DEAL",
+    deal._id,
+  );
 
   try {
     await createActivity({
@@ -494,6 +513,16 @@ const markDealAsWon = asyncwrapper(async (req, res, next) => {
   await Lead.findByIdAndUpdate(deal.leadId, {
     status: "WON",
   });
+  if (deal.assignedTo) {
+    await notify(
+      deal.assignedTo,
+      "DEAL_WON",
+      "Deal won",
+      `Deal "${deal.title}" was won.`,
+      "DEAL",
+      deal._id,
+    );
+  }
 
   try {
     await createActivity({

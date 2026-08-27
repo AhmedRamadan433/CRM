@@ -6,6 +6,7 @@ const asyncwrapper = require("../utils/Async_Wrapper");
 const HttpStatusText = require("../utils/HttpStatusText");
 
 const { createActivity } = require("../services/activity.service");
+const { notify } = require("../services/notification.service");
 
 // Validate user access to conversation
 const hasConversationAccess = (conversation, user) => {
@@ -126,6 +127,17 @@ const sendMessage = asyncwrapper(async (req, res, next) => {
       unreadCount: 1,
     },
   });
+
+  if (conversation.assignedTo && conversation.assignedTo.toString() !== req.user._id.toString()) {
+    await notify(
+      conversation.assignedTo,
+      "NEW_MESSAGE",
+      "New message",
+      "A new message arrived in your conversation.",
+      "CONVERSATION",
+      conversation._id,
+    );
+  }
 
   // Activity Log
   await createActivity({

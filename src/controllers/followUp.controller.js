@@ -5,6 +5,7 @@ const User = require("../models/User.model");
 const AppError = require("../utils/AppError");
 const asyncwrapper = require("../utils/Async_Wrapper");
 const HttpStatusText = require("../utils/HttpStatusText");
+const { notify, markOverdueFollowUps } = require("../services/notification.service");
 
 let createActivity = null;
 try {
@@ -31,6 +32,8 @@ const hasFollowUpAccess = (followUp, user) => {
 const createFollowUp = asyncwrapper(async (req, res, next) => {
   const { customerId, leadId, assignedTo, title, description, type, dueDate } =
     req.body;
+  const effectiveAssignedTo =
+    req.user.role === "SALES_AGENT" ? req.user._id : assignedTo;
 
   if (!customerId) {
     return next(
@@ -50,7 +53,7 @@ const createFollowUp = asyncwrapper(async (req, res, next) => {
     );
   }
 
-  if (!assignedTo) {
+  if (!effectiveAssignedTo) {
     return next(
       new AppError("Assigned user is required", 400, HttpStatusText.FAIL),
     );
@@ -65,7 +68,7 @@ const createFollowUp = asyncwrapper(async (req, res, next) => {
   }
 
   // Validate assigned user exists and is active
-  const assignedUser = await User.findById(assignedTo);
+  const assignedUser = await User.findById(effectiveAssignedTo);
   if (!assignedUser) {
     return next(
       new AppError("Assigned user not found", 404, HttpStatusText.FAIL),
@@ -101,13 +104,21 @@ const createFollowUp = asyncwrapper(async (req, res, next) => {
   const followUp = await FollowUp.create({
     customerId,
     leadId: leadId || null,
-    assignedTo,
+    assignedTo: effectiveAssignedTo,
     createdBy: req.user._id,
     title: title.trim(),
     description: description ? description.trim() : null,
     type: type ? type.toUpperCase() : "TASK",
     dueDate,
   });
+  await notify(
+    effectiveAssignedTo,
+    "FOLLOWUP_ASSIGNED",
+    "Follow-up assigned",
+    `Follow-up "${followUp.title}" was assigned to you.`,
+    "FOLLOWUP",
+    followUp._id,
+  );
 
   if (createActivity) {
     try {
@@ -148,6 +159,7 @@ const createFollowUp = asyncwrapper(async (req, res, next) => {
 
 // Get all follow-ups with filters
 const getAllFollowUps = asyncwrapper(async (req, res, next) => {
+  await markOverdueFollowUps(FollowUp, notify);
   const { status, assignedTo, customerId, leadId, type, dueBefore, dueAfter } =
     req.query;
 
@@ -162,7 +174,9 @@ const getAllFollowUps = asyncwrapper(async (req, res, next) => {
   }
 
   if (status) filter.status = status.toUpperCase();
-  if (assignedTo) filter.assignedTo = assignedTo;
+  if (assignedTo && req.user.role !== "SALES_AGENT") {
+    filter.assignedTo = assignedTo;
+  }
   if (customerId) filter.customerId = customerId;
   if (leadId) filter.leadId = leadId;
   if (type) filter.type = type.toUpperCase();
@@ -296,13 +310,29 @@ const updateFollowUp = asyncwrapper(async (req, res, next) => {
   if (description !== undefined) updates.description = description ? description.trim() : null;
   if (type) updates.type = type.toUpperCase();
   if (dueDate) updates.dueDate = dueDate;
-  if (assignedTo) updates.assignedTo = assignedTo;
+  if (assignedTo) {
+    updates.assignedTo =
+      req.user.role === "SALES_AGENT" ? req.user._id : assignedTo;
+  }
 
   const updated = await FollowUp.findByIdAndUpdate(
     req.params.id,
     updates,
     { runValidators: true, returnDocument: "after" },
   );
+  if (
+    assignedTo &&
+    (!followUp.assignedTo || followUp.assignedTo.toString() !== assignedTo.toString())
+  ) {
+    await notify(
+      assignedTo,
+      "FOLLOWUP_ASSIGNED",
+      "Follow-up assigned",
+      `Follow-up "${updated.title}" was assigned to you.`,
+      "FOLLOWUP",
+      updated._id,
+    );
+  }
 
   const populated = await updated.populate([
     { path: "customerId", select: "name email phone" },
