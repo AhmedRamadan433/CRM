@@ -1,6 +1,8 @@
 const express = require("express");
 const app = express();
+const cors = require("cors");
 const All_Routes = require("./routes/All_Routes");
+app.use(cors());
 app.use(express.json());
 /// routes
 app.use("/", All_Routes);

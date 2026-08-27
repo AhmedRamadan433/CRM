@@ -41,6 +41,10 @@ const userSchema = new mongoose.Schema(
       required: [true, "Phone is required"],
       unique: true,
       trim: true,
+      match: [
+        /^01[0125][0-9]{8}$/,
+        "Please provide a valid Egyptian phone number",
+      ],
     },
 
     role: {
