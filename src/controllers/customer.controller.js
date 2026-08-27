@@ -40,11 +40,29 @@ const getAllCustomers = asyncwrapper(async (req, res, next) => {
     if (req.query.createdAfter) filter.createdAt.$gte = new Date(req.query.createdAfter);
     if (req.query.createdBefore) filter.createdAt.$lt = new Date(req.query.createdBefore);
   }
-  const customers = await Customer.find(filter);
+  const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+  const limit = Math.min(
+    Math.max(parseInt(req.query.limit, 10) || 20, 1),
+    100,
+  );
+  const [customers, total] = await Promise.all([
+    Customer.find(filter)
+      .select("name phone email avatar tags source notes assignedTo createdAt updatedAt")
+      .populate("assignedTo", "name email role")
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .lean(),
+    Customer.countDocuments(filter),
+  ]);
 
   res.status(200).json({
     status: HttpStatusText.SUCCESS,
     results: customers.length,
+    total,
+    page,
+    limit,
+    totalPages: Math.ceil(total / limit),
     data: customers,
   });
 });

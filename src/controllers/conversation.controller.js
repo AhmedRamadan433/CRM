@@ -97,14 +97,32 @@ const createConversation = asyncwrapper(async (req, res, next) => {
 
 // Get all conversations
 const getAllConversations = asyncwrapper(async (req, res, next) => {
-  const conversations = await Conversation.find(conversationAccessFilter(req))
-    .populate("customerId")
-    .populate("leadId")
-    .populate("assignedTo");
+  const filter = conversationAccessFilter(req);
+  if (req.query.status) filter.status = req.query.status.toUpperCase();
+  const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+  const limit = Math.min(
+    Math.max(parseInt(req.query.limit, 10) || 20, 1),
+    100,
+  );
+  const [conversations, total] = await Promise.all([
+    Conversation.find(filter)
+      .populate("customerId", "name email phone")
+      .populate("leadId", "title status product")
+      .populate("assignedTo", "name email role")
+      .sort({ lastMessageAt: -1, updatedAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .lean(),
+    Conversation.countDocuments(filter),
+  ]);
 
   res.status(200).json({
     status: HttpStatusText.SUCCESS,
     results: conversations.length,
+    total,
+    page,
+    limit,
+    totalPages: Math.ceil(total / limit),
     data: {
       conversations,
     },

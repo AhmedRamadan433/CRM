@@ -8,10 +8,28 @@ const activityAccessFilter = (req) =>
 
 /// get all activities
 const getAllActivities = asyncwrapper(async (req, res, next) => {
-  const activities = await Activity.find(activityAccessFilter(req));
+  const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+  const limit = Math.min(
+    Math.max(parseInt(req.query.limit, 10) || 20, 1),
+    100,
+  );
+  const filter = activityAccessFilter(req);
+  const [activities, total] = await Promise.all([
+    Activity.find(filter)
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .lean(),
+    Activity.countDocuments(filter),
+  ]);
 
   res.status(200).json({
     status: HttpStatusText.SUCCESS,
+    results: activities.length,
+    total,
+    page,
+    limit,
+    totalPages: Math.ceil(total / limit),
     data: {
       activities,
     },

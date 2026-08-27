@@ -109,14 +109,29 @@ const getAllLeads = asyncwrapper(async (req, res, next) => {
     filter.source = source;
   }
 
-  const leads = await Lead.find(filter)
-    .populate("customerId")
-    .populate("assignedTo")
-    .lean();
+  const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+  const limit = Math.min(
+    Math.max(parseInt(req.query.limit, 10) || 20, 1),
+    100,
+  );
+  const [leads, total] = await Promise.all([
+    Lead.find(filter)
+      .populate("customerId", "name email phone")
+      .populate("assignedTo", "name email role")
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .lean(),
+    Lead.countDocuments(filter),
+  ]);
 
   res.status(200).json({
     status: HttpStatusText.SUCCESS,
     results: leads.length,
+    total,
+    page,
+    limit,
+    totalPages: Math.ceil(total / limit),
     data: leads,
   });
 });
