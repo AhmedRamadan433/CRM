@@ -1,9 +1,32 @@
 const User = require("../models/User.model");
-
+const multer = require("multer");
+const sharp = require("sharp");
 const AppError = require("../utils/AppError");
 const asyncwrapper = require("../utils/Async_Wrapper");
 const HttpStatusText = require("../utils/HttpStatusText");
+const fs = require("fs/promises");
+///////////// uploads
+const storage = multer.memoryStorage();
+const upload = multer({ storage });
 
+const outputPath = "images/users";
+fs.mkdir(outputPath, { recursive: true });
+
+const resizeUserImage = async (req, res, next) => {
+  if (!req.file) {
+    return next();
+  }
+  const filename = `${req.user.id}-${Date.now()}.jpeg`;
+  const filePath = `${outputPath}/${filename}`;
+  const output = await sharp(req.file.buffer)
+    .resize(500, 500)
+    .toFormat("jpeg")
+    .jpeg({ quality: 90 })
+    .toFile(filePath);
+  req.file.filename = filename;
+  req.file.path = filePath;
+  next();
+};
 // Create new user
 const createUser = asyncwrapper(async (req, res, next) => {
   const { name, email, password, passwordConfirm, phone, role } = req.body;
@@ -60,7 +83,7 @@ const getUserById = asyncwrapper(async (req, res, next) => {
 
 // Update user by ID
 const updateUserById = asyncwrapper(async (req, res, next) => {
-  const { name, email, phone, avatar } = req.body;
+  const { name, email, phone } = req.body;
 
   const user = await User.findByIdAndUpdate(
     req.params.id,
@@ -68,7 +91,7 @@ const updateUserById = asyncwrapper(async (req, res, next) => {
       name,
       email,
       phone,
-      avatar,
+      avatar: req.file ? req.file.filename : undefined,
     },
     {
       runValidators: true,
@@ -77,6 +100,9 @@ const updateUserById = asyncwrapper(async (req, res, next) => {
   );
 
   if (!user) {
+    if (req.file) {
+      await fs.unlink(req.file.path);
+    }
     return next(new AppError("User not found.", 404, HttpStatusText.FAIL));
   }
 
@@ -147,4 +173,6 @@ module.exports = {
   updateUserById,
   deactivateUserById,
   assignRoleToUserById,
+  resizeUserImage,
+  upload,
 };

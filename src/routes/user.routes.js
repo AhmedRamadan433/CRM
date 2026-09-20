@@ -13,7 +13,12 @@ router
 router
   .route("/:id")
   .get(restrictTo("ADMIN", "MANAGER"), userController.getUserById)
-  .patch(restrictTo("ADMIN"), userController.updateUserById);
+  .patch(
+    restrictTo("ADMIN"),
+    userController.upload.single("avatar"),
+    userController.resizeUserImage,
+    userController.updateUserById,
+  );
 
 router.patch(
   "/:id/deactivate",
